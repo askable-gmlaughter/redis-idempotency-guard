@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 
-from . import db, provider
+from . import db, idempotency, provider
 
 bp = Blueprint("payments", __name__)
 
@@ -30,23 +30,38 @@ def _process(merchant_id, body):
     }
 
 
-def handle(merchant_id, body):
+def handle(merchant_id, idem_key, body):
     error = _validate(body)
     if error:
         return 400, {"error": error}
+
+    outcome = idempotency.begin(merchant_id, idem_key, body)
+    if outcome[0] == "done":
+        return outcome[1], outcome[2]
+    claim = outcome[1]
+
     try:
-        return _process(merchant_id, body)
+        status, response = _process(merchant_id, body)
     except provider.ProviderError:
+        idempotency.release(claim)
         return 502, {"error": "provider_error"}
+    except Exception:
+        idempotency.release(claim)
+        raise
+
+    idempotency.finish(claim, status, response)
+    return status, response
+
 
 @bp.post("/payments")
 def create_payment():
     merchant_id = request.headers.get("X-Merchant-Id")
-    if not merchant_id:
+    idem_key = request.headers.get("Idempotency-Key")
+    if not merchant_id or not idem_key:
         return jsonify({"error": "missing_header"}), 400
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify({"error": "invalid_body"}), 400
-    status, response = handle(merchant_id, body)
+    status, response = handle(merchant_id, idem_key, body)
     return jsonify(response), status
 
