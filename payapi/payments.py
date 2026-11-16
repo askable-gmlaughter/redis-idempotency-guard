@@ -65,3 +65,22 @@ def create_payment():
     status, response = handle(merchant_id, idem_key, body)
     return jsonify(response), status
 
+
+@bp.post("/payments/batch")
+def create_batch():
+    merchant_id = request.headers.get("X-Merchant-Id")
+    if not merchant_id:
+        return jsonify({"error": "missing_header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        return jsonify({"error": "invalid_body"}), 400
+
+    results = []
+    for item in payload["items"]:
+        if not isinstance(item, dict) or not item.get("idempotency_key"):
+            results.append({"status": 400, "body": {"error": "missing_idempotency_key"}})
+            continue
+        body = {k: v for k, v in item.items() if k != "idempotency_key"}
+        status, response = handle(merchant_id, item["idempotency_key"], body)
+        results.append({"status": status, "body": response})
+    return jsonify({"results": results}), 200
