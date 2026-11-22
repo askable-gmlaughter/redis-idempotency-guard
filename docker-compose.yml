@@ -1,0 +1,17 @@
+services:
+  redis:
+    image: redis:7.2.5-bookworm
+
+  api:
+    build: .
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+
+  test:
+    build: .
+    command: python tests/integration_test.py
+    profiles: ["test"]
